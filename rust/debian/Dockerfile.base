@@ -3,7 +3,7 @@ FROM buildpack-deps:${VARIANT_VERSION}-curl
 
 # Needs to be in this scope too
 ARG VARIANT_VERSION=buster
-
+ARG LIBC="gnu"
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION
 ARG SCCACHE_ENDPOINT
@@ -72,7 +72,7 @@ RUN unmunch /usr/share/hunspell/en_GB.dic /usr/share/hunspell/en_GB.aff 2> /dev/
 ################################################################################################
 
 # msitools not avail on buster
-RUN if [[ "${VARIANT_VERSION}" != "buster" ]] ; then \
+RUN if [[ "$(uname -m)" != "s390x" ]] ; then \
     apt update -y && \
     apt install -y meson valac-bin valac valac-0.48-vapi libgsf-1-dev bats bison libgcab-dev libgirepository1.0-dev wine && \
     git clone --recurse-submodules https://github.com/GNOME/msitools.git && \
@@ -98,23 +98,31 @@ RUN curl --retry 10 -sSfL https://sh.rustup.rs -sSf | \
 
 ## Set up default cargo env vars for cross compiling
 ENV GNU_TRIPLE="${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-gnu"
-ENV MUSL_TRIPLE="${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl"
+ENV MUSL_TRIPLE="${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}"
 
 # Set up basic musl C configuration for to use clang as the linker driver, llvm-ar, ETC
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_AR=llvm-ar
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Clink-args=-fuse-ld=lld \
-                                                       -Clink-args=--target=aarch64-unknown-linux-musl"
+                                                       -Clink-args=--target=aarch64-unknown-linux-${LIBC}"
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_AR=llvm-ar
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Clink-args=-fuse-ld=lld \
-                                                      -Clink-args=--target=x86_64-unknown-linux-musl"
+                                                      -Clink-args=--target=x86_64-unknown-linux-${LIBC}"
+ENV CARGO_TARGET_s390x_UNKNOWN_LINUX_MUSL_LINKER=clang
+ENV CARGO_TARGET_s390x_UNKNOWN_LINUX_MUSL_AR=llvm-ar
+ENV CARGO_TARGET_s390x_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Clink-args=-fuse-ld=lld \
+                                                    -Clink-args=--target=s390x-unknown-linux-${LIBC}"
+
 # Teach cargo to use clang as the linker driver
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=clang
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_AR=llvm-ar
 
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_AR=llvm-ar
+
+ENV CARGO_TARGET_s390x_UNKNOWN_LINUX_GNU_LINKER=clang
+ENV CARGO_TARGET_s390x_UNKNOWN_LINUX_GNU_AR=llvm-ar
 
 # Set up basic gnu C configuration for to use clang as the linker driver, llvm-ar, ETC
 ENV CC_aarch64_unknown_linux_gnu="clang"
@@ -126,6 +134,11 @@ ENV CC_x86_64_unknown_linux_gnu="clang"
 ENV CFLAGS_x86_64_unknown_linux_gnu="--target=x86_64-unknown-linux-gnu -fuse-ld=lld -fPIC"
 ENV CXX_x86_64_unknown_linux_gnu="clang++"
 ENV CXXFLAGS_x86_64_unknown_linux_gnu="--target=x86_64-unknown-linux-gnu -fuse-ld=lld -fPIC"
+
+ENV CC_s390x_unknown_linux_gnu="clang"
+ENV CFLAGS_s390x_unknown_linux_gnu="--target=s390x-unknown-linux-gnu -fuse-ld=lld -fPIC"
+ENV CXX_s390x_unknown_linux_gnu="clang++"
+ENV CXXFLAGS_s390x_unknown_linux_gnu="--target=s390x-unknown-linux-gnu -fuse-ld=lld -fPIC"
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 

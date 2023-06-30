@@ -1,4 +1,4 @@
-ARG CROSS_COMPILER_TARGET_ARCH=x86_64
+ARG CROSS_COMPILER_TARGET_ARCH="$(uname -m)""
 ARG BASE_IMAGE=logdna/build-images/rust-buster-1-stable-base-${CROSS_COMPILER_TARGET_ARCH}
 
 # Image that runs natively on the BUILDPLATFORM to produce cross compile
@@ -9,7 +9,7 @@ SHELL ["/bin/bash", "-c"]
 
 ARG BUILDARCH
 ARG TARGETARCH
-
+ARG LIBC="gnu"
 ARG CROSS_COMPILER_TARGET_ARCH
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION
@@ -19,24 +19,26 @@ ARG SCCACHE_SERVER_PORT=4226
 
 ARG CARGO_BINSTALL_URL_BASE="https://github.com/cargo-bins/cargo-binstall/releases/latest/download"
 
-RUN rustup target add "${!TARGETARCH}-unknown-linux-musl"
+RUN rustup target add "${!TARGETARCH}-unknown-linux-${LIBC}"
 
 RUN dpkg --add-architecture ${TARGETARCH} && \
     dpkg --add-architecture ${!CROSS_COMPILER_TARGET_ARCH} && \
-    apt-get -q update -y && apt-get -q install --no-install-recommends -y musl-dev:${TARGETARCH} libcap-dev:${TARGETARCH}
+    apt-get -q update -y && apt-get -q install --no-install-recommends -y ${LIBC}-dev:${TARGETARCH} libcap-dev:${TARGETARCH}
 
 ENV CC_aarch64_unknown_linux_musl=clang
-ENV CFLAGS_aarch64_unknown_linux_musl="-isystem /usr/include/aarch64-linux-musl"
+ENV CFLAGS_aarch64_unknown_linux_musl="-isystem /usr/include/aarch64-linux-${LIBC}"
 ENV CC_x86_64_unknown_linux_musl=clang
-ENV CFLAGS_x86_64_unknown_linux_musl="-isystem /usr/include/x86_64-linux-musl"
+ENV CFLAGS_x86_64_unknown_linux_musl="-isystem /usr/include/x86_64-linux-${LIBC}"
+ENV CC_s390x_unknown_linux_musl=clang
+ENV CFLAGS_s390x_unknown_linux_musl="-isystem /usr/include/s390x-linux-${LIBC}"
 
 RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
     mkdir -p /out/tools /usr/local/bin/ && \
     # Install sccache for this image \
-    curl --retry 10 -LsSf "${CARGO_BINSTALL_URL_BASE}/cargo-binstall-${!BUILDARCH}-unknown-linux-musl.tgz" \
+    curl --retry 10 -LsSf "${CARGO_BINSTALL_URL_BASE}/cargo-binstall-${!BUILDARCH}-unknown-linux-${LIBC}.tgz" \
     | tar -xzC /usr/local/bin/ && \
     cargo binstall -y -q sccache --version 0.3 --no-symlinks --install-path /usr/local/bin \
-        --target=${!BUILDARCH}-unknown-linux-musl && \
+        --target=${!BUILDARCH}-unknown-linux-${LIBC} && \
     echo "installed build build image sccache" && \
     if [ -n "$SCCACHE_BUCKET" ]; then export RUSTC_WRAPPER=/usr/local/bin/sccache; fi && \
     if [ -z "$SCCACHE_ENDPOINT" ]; then unset SCCACHE_ENDPOINT; fi && \
@@ -44,33 +46,33 @@ RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
     # Add sccache cargo-flamegraph, cargo-audit, cargo-cache, etc \
     cargo install -q sccache --root /out/tools --version 0.3.3 \
         --features=azure,s3,openssl/vendored --no-default-features \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image sccache" && \
     cargo binstall -y -q cargo-nextest --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-nextest" && \
     cargo binstall -y -q cargo-llvm-cov --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-llvm-cov" && \
     cargo binstall -y -q cargo-xwin \
         --pkg-url="{ repo }/releases/download/v{ version }/{ name }-v{ version }.{ target }.{ archive-format }" \
         --version 0.14 --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-xwin" && \
     cargo binstall -y -q cargo-tarpaulin --version 0.25 --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-tarpaulin" && \
     cargo binstall -y -q flamegraph --version 0.6 --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-flamegraph" && \
     cargo binstall -y -q cargo-cache --version 0.8 --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-cache" && \
     cargo binstall -y -q cargo-audit --version 0.17 --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-audit" && \
     cargo binstall -y -q cargo-udeps --version 0.1 --no-symlinks --install-path /out/tools \
-        --target=${!TARGETARCH}-unknown-linux-musl && \
+        --target=${!TARGETARCH}-unknown-linux-${LIBC} && \
     echo "built build image cargo-udeps" && \
     if [ -n "$SCCACHE_BUCKET" ]; then sccache --show-stats; fi
 
@@ -81,7 +83,7 @@ ENV LINUX_HEADER_VERSION="4.19.88"
 ARG MUSL_VERSION="1.2.2"
 
 ENV LLVM_SYSROOT="/sysroot/${CROSS_COMPILER_TARGET_ARCH}-musl"
-ENV MUSL_TRIPLE="${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl"
+ENV MUSL_TRIPLE="${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}"
 
 
 # Create LLVM_SYSROOT
@@ -117,7 +119,7 @@ RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
 ENV CMAKE_COMMAND="cmake -q --parallel=$(nproc) --log-level=WARNING -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_INSTALL_MESSAGE=NEVER"
 ENV CMAKE_HOST_ARGS="-DCMAKE_INSTALL_PREFIX=${LLVM_SYSROOT}/usr -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld"
 ENV CMAKE_HOST="$CMAKE_COMMAND $CMAKE_HOST_ARGS"
-ENV CMAKE_TARGET=${CROSS_COMPILER_TARGET_ARCH}-linux-musl
+ENV CMAKE_TARGET=${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}
 ENV CMAKE_PROGRAMS="-DCMAKE_AR=/usr/bin/llvm-ar -DCMAKE_C_COMPILER=/usr/bin/clang \
                     -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_NM=/usr/bin/llvm-nm \
                     -DCMAKE_RANLIB=/usr/bin/llvm-ranlib -DLLVM_CONFIG_PATH=/usr/bin/llvm-config"
@@ -127,11 +129,11 @@ ENV CMAKE_CROSS_ARGS="${CMAKE_PROGRAMS} ${CMAKE_HOST_ARGS} \
                      -DCMAKE_C_COMPILER_TARGET=${CMAKE_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${CMAKE_TARGET} \
                      -DCMAKE_C_COMPILER_WORKS=TRUE -DCMAKE_CXX_COMPILER_WORKS=TRUE \
                      -DLLVM_DEFAULT_TARGET_TRIPLE=${CMAKE_TARGET}"
-ENV CMAKE_SHARED_FLAGS="--gcc-toolchain=${LLVM_SYSROOT}/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl \
+ENV CMAKE_SHARED_FLAGS="--gcc-toolchain=${LLVM_SYSROOT}/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC} \
                         -fuse-ld=lld -nostdinc -nodefaultlibs -nostdlib \
-                        -isystem ${LLVM_SYSROOT}/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/include/ \
+                        -isystem ${LLVM_SYSROOT}/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/include/ \
                         -isystem ${LLVM_SYSROOT}/usr/include/ -Wno-unused-command-line-argument"
-ENV CMAKE_C_FLAGS="${CMAKE_SHARED_FLAGS} -B${LLVM_SYSROOT}/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/lib/"
+ENV CMAKE_C_FLAGS="${CMAKE_SHARED_FLAGS} -B${LLVM_SYSROOT}/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/lib/"
 ENV CMAKE_CXX_FLAGS="-nostdinc++ ${CMAKE_SHARED_FLAGS} --stdlib=libc++ --rtlib=compiler-rt"
 ENV CMAKE_CROSS="$CMAKE_COMMAND $CMAKE_CROSS_ARGS"
 
@@ -153,7 +155,7 @@ RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
     make install-clang-resource-headers && \
     # Generate and install sysroot libc++ headers \
     cd $REPOS/libcxx && mkdir build && cd build && \
-    $CMAKE_CROSS $CMAKE_LAUNCHERS -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" -DCMAKE_C_IMPLICIT_LINK_DIRECTORIES= -DCMAKE_CXX_IMPLICIT_LINK_DIRECTORIES= -DLIBCXX_LINK_FLAGS=-fuse-ld=lld -DLIBCXX_GCC_TOOLCHAIN=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl -DLIBCXX_HAS_MUSL_LIBC=1 -DLIBCXX_HAS_GCC_S_LIB=0 -DLIBCXX_CXX_ABI=libcxxabi -DLIBCXX_CXX_ABI_INCLUDE_PATHS="$REPOS/libcxxabi/include" -DLIBCXX_CXX_ABI_LIBRARY_PATH="$REPOS/libcxxabi/build/lib" -DLLVM_PATH="$REPOS/llvm" .. && \
+    $CMAKE_CROSS $CMAKE_LAUNCHERS -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" -DCMAKE_C_IMPLICIT_LINK_DIRECTORIES= -DCMAKE_CXX_IMPLICIT_LINK_DIRECTORIES= -DLIBCXX_LINK_FLAGS=-fuse-ld=lld -DLIBCXX_GCC_TOOLCHAIN=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC} -DLIBCXX_HAS_MUSL_LIBC=1 -DLIBCXX_HAS_GCC_S_LIB=0 -DLIBCXX_CXX_ABI=libcxxabi -DLIBCXX_CXX_ABI_INCLUDE_PATHS="$REPOS/libcxxabi/include" -DLIBCXX_CXX_ABI_LIBRARY_PATH="$REPOS/libcxxabi/build/lib" -DLLVM_PATH="$REPOS/llvm" .. && \
     make cxx_abi_headers generate-cxx-headers install-cxx-headers && \
     # Build and install sysroot compiler-rt \
     cd $REPOS/compiler-rt && mkdir build && cd build && \
@@ -164,11 +166,11 @@ RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
     make install && \
     # Build libunwind \
     cd $REPOS/libunwind && mkdir build && cd build && \
-    $CMAKE_CROSS $CMAKE_LAUNCHERS -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" -DLIBUNWIND_LINK_FLAGS=-fuse-ld=lld -DCMAKE_LLVM_SYSROOT=${LLVM_SYSROOT} -DLIBUNWIND_GCC_TOOLCHAIN=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl -DLIBUNWIND_ENABLE_SHARED=0 -DLLVM_PATH="$REPOS/llvm" .. && \
+    $CMAKE_CROSS $CMAKE_LAUNCHERS -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" -DLIBUNWIND_LINK_FLAGS=-fuse-ld=lld -DCMAKE_LLVM_SYSROOT=${LLVM_SYSROOT} -DLIBUNWIND_GCC_TOOLCHAIN=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC} -DLIBUNWIND_ENABLE_SHARED=0 -DLLVM_PATH="$REPOS/llvm" .. && \
     make && \
     # Build and install libcxxabi \
     cd $REPOS/libcxxabi/ && mkdir build && cd build && \
-    $CMAKE_CROSS $CMAKE_LAUNCHERS -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" -DLIBCXXABI_HAS_CXA_THREAD_ATEXIT_IMPL=NO -DLIBCXXABI_LINK_FLAGS=-fuse-ld=lld -DLIBCXXABI_GCC_TOOLCHAIN=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl -DCMAKE_SHARED_LINKER_FLAGS="-L$REPOS/libunwind/build/lib" -DLIBCXXABI_USE_LLVM_UNWINDER=1 -DLIBCXXABI_LIBUNWIND_PATH="$REPOS/libunwind" -DLIBCXXABI_LIBCXX_INCLUDES="$REPOS/libcxx/build/include/c++/v1/" -DLLVM_PATH="$REPOS/llvm" .. && \
+    $CMAKE_CROSS $CMAKE_LAUNCHERS -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" -DLIBCXXABI_HAS_CXA_THREAD_ATEXIT_IMPL=NO -DLIBCXXABI_LINK_FLAGS=-fuse-ld=lld -DLIBCXXABI_GCC_TOOLCHAIN=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC} -DCMAKE_SHARED_LINKER_FLAGS="-L$REPOS/libunwind/build/lib" -DLIBCXXABI_USE_LLVM_UNWINDER=1 -DLIBCXXABI_LIBUNWIND_PATH="$REPOS/libunwind" -DLIBCXXABI_LIBCXX_INCLUDES="$REPOS/libcxx/build/include/c++/v1/" -DLLVM_PATH="$REPOS/llvm" .. && \
     make cxxabi_static && \
     make install && \
     # Build and install libc++ \
@@ -189,15 +191,15 @@ RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
     tar xzf "zlib-$ZLIB_VERSION.tar.gz" && cd "zlib-$ZLIB_VERSION" && \
     echo "Building zlib" && \
     cd /tmp/zlib/zlib-$ZLIB_VERSION && \
-    export CC="$CC_WRAPPER clang --target=${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl" \
-    CFLAGS="-nostdinc -isystem $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/include/" \
+    export CC="$CC_WRAPPER clang --target=${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}" \
+    CFLAGS="-nostdinc -isystem $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/include/" \
     LDSHARED="lld" AR=llvm-ar RANLIB=llvm-ranlib \
-    LDFLAGS="-L$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/lib"; \
+    LDFLAGS="-L$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/lib"; \
     # Legacy path \
     ./configure --static --shared --prefix=/usr/local/musl || cat configure.log && \
     make install && \
     # sysroot \
-    ./configure --static --shared --prefix=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl || cat configure.log && \
+    ./configure --static --shared --prefix=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC} || cat configure.log && \
     make install && \
     if [ -n "$SCCACHE_BUCKET" ]; then sccache --show-stats; fi; \
     rm -r /tmp/zlib
@@ -213,15 +215,15 @@ RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
     export MAKEFLAGS="--silent -j $(nproc)"; \
     export USE_CLANG=1 TARGET_OS=Linux PORTABLE=1 AR=llvm-ar; \
     export TARGET_ARCHITECTURE=${CROSS_COMPILER_TARGET_ARCH}; \
-    export C_INCLUDES="-isystem $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/include/ -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/include/"; \
-    export CC="$CC_WRAPPER clang --target=${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl"; \
+    export C_INCLUDES="-isystem $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/include/ -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/include/"; \
+    export CC="$CC_WRAPPER clang --target=${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}"; \
     export EXTRA_CFLAGS="-nostdinc -fPIC $C_INCLUDES -nostdlib -nostdlib++ -nodefaultlibs -Wno-unused-command-line-argument"; \
-    export CXX="$CC_WRAPPER clang++ -nostdlib++ -fuse-ld=lld --target=${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl"; \
-    export EXTRA_CXXFLAGS="-nostdinc -nostdinc++ -fPIC -isystem $LLVM_SYSROOT/usr/include/c++/v1/ -isystem $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/include/ -D _LIBCPP_HAS_MUSL_LIBC $C_INCLUDES -Wno-unused-command-line-argument "; \
-    export CFLAGS="$EXTRA_CFLAGS -L$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/lib"; \
+    export CXX="$CC_WRAPPER clang++ -nostdlib++ -fuse-ld=lld --target=${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}"; \
+    export EXTRA_CXXFLAGS="-nostdinc -nostdinc++ -fPIC -isystem $LLVM_SYSROOT/usr/include/c++/v1/ -isystem $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/include/ -D _LIBCPP_HAS_MUSL_LIBC $C_INCLUDES -Wno-unused-command-line-argument "; \
+    export CFLAGS="$EXTRA_CFLAGS -L$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/lib"; \
     DISABLE_WARNING_AS_ERROR=1 make static_lib && \
-    cp librocksdb.a* $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/lib && \
-    cp -r include/* $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/include/ && \
+    cp librocksdb.a* $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/lib && \
+    cp -r include/* $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/include/ && \
     if [ -n "$SCCACHE_BUCKET" ]; then sccache --show-stats; fi; \
     rm -R /tmp/rocksdb/
 
@@ -248,40 +250,43 @@ ARG SCCACHE_SERVER_PORT=4226
 
 ARG CROSS_COMPILER_TARGET_ARCH
 ENV LLVM_SYSROOT="/sysroot/${CROSS_COMPILER_TARGET_ARCH}-musl"
-ENV MUSL_TRIPLE="${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl"
+ENV MUSL_TRIPLE="${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}"
 
 ENV RUSTC_WRAPPER="/usr/local/bin/sccache"
 ENV CC_WRAPPER="/usr/local/bin/sccache"
 
 # Copy files around to ensure changes are compatible with agent 3.3 and 3.4
-RUN mkdir -p /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/include && \
-    mkdir -p /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/lib && \
-    cp $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/lib/librocksdb.a* /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/lib && \
-    cp -r $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/include/rocksdb/ /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/include/ && \
-    cp -r $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/include/rocksdb/ /usr/include/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/ && \
-    cp -r $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-musl && \
-    cp -r $LLVM_SYSROOT/usr/lib/* /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/lib/ && \
-    ln -s /usr/lib/llvm-${LLVM_MAJOR_VERSION}/bin/llvm-strip /usr/local/bin/${CROSS_COMPILER_TARGET_ARCH}-linux-gnu-strip && \
-    ln -s /usr/lib/llvm-${LLVM_MAJOR_VERSION}/bin/llvm-strip /usr/local/bin/${CROSS_COMPILER_TARGET_ARCH}-linux-musl-strip && \
+RUN mkdir -p /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/include && \
+    mkdir -p /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/lib && \
+    cp $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/lib/librocksdb.a* /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/lib && \
+    cp -r $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/include/rocksdb/ /usr/local/rocksdb/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/include/ && \
+    cp -r $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/include/rocksdb/ /usr/include/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/ && \
+    cp -r $LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC} /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC} && \
+    cp -r $LLVM_SYSROOT/usr/lib/* /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/lib/ && \
+    ln -s /usr/lib/llvm-${LLVM_MAJOR_VERSION}/bin/llvm-strip /usr/local/bin/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}-strip && \
+    ln -s /usr/lib/llvm-${LLVM_MAJOR_VERSION}/bin/llvm-strip /usr/local/bin/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}-strip && \
     # Build a fake libstdc++ from libc++ and libc++abi to work around some rust crate build.rs deficiencies \
-    printf "create /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/lib/libstdc++.a\naddlib /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/lib/libc++.a\naddlib /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-musl/lib/libc++abi.a\nsave\nend" | llvm-ar -M && \
+    printf "create /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/lib/libstdc++.a\naddlib /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/lib/libc++.a\naddlib /usr/local/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}/lib/libc++abi.a\nsave\nend" | llvm-ar -M && \
     printf "create $LLVM_SYSROOT/usr/lib/libstdc++.a\naddlib $LLVM_SYSROOT/usr/lib/libc++.a\naddlib $LLVM_SYSROOT/usr/lib/libc++abi.a\nsave\nend" | llvm-ar -M ;
 
 # Some legacy compat linkers
-RUN printf "#!/usr/bin/env bash\nclang -fuse-ld=lld --target=aarch64-unknown-linux-musl \$@" > /usr/local/bin/aarch64-unknown-linux-musl-clang && \
-    chmod +x /usr/local/bin/aarch64-unknown-linux-musl-clang && \
-    printf "#!/usr/bin/env bash\nclang -fuse-ld=lld --target=x86_64-unknown-linux-musl \$@" > /usr/local/bin/x86_64-unknown-linux-musl-clang && \
-    chmod +x /usr/local/bin/x86_64-unknown-linux-musl-clang
+RUN printf "#!/usr/bin/env bash\nclang -fuse-ld=lld --target=aarch64-unknown-linux-${LIBC} \$@" > /usr/local/bin/aarch64-unknown-linux-${LIBC}-clang && \
+    chmod +x /usr/local/bin/aarch64-unknown-linux-${LIBC}-clang && \
+    printf "#!/usr/bin/env bash\nclang -fuse-ld=lld --target=x86_64-unknown-linux-${LIBC} \$@" > /usr/local/bin/x86_64-unknown-linux-${LIBC}-clang && \
+    chmod +x /usr/local/bin/x86_64-unknown-linux-${LIBC}-clang && \
+    printf "#!/usr/bin/env bash\nclang -fuse-ld=lld --target=s390x-unknown-linux-${LIBC} \$@" > /usr/local/bin/s390x-unknown-linux-${LIBC}-clang && \
+    chmod +x /usr/local/bin/s390x-unknown-linux-${LIBC}-clang
 
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="/usr/local/bin/aarch64-unknown-linux-musl-clang"
-ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="/usr/local/bin/x86_64-unknown-linux-musl-clang"
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="/usr/local/bin/aarch64-unknown-linux-${LIBC}-clang"
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="/usr/local/bin/x86_64-unknown-linux-${LIBC}-clang"
+ENV CARGO_TARGET_s390x_UNKNOWN_LINUX_MUSL_LINKER="/usr/local/bin/s390x-unknown-linux-${LIBC}-clang"
 
 ENV XWIN_CACHE_DIR="${CARGO_HOME}/xwin"
 ENV XWIN_TOOLKIT_BIN_PATH="/usr/local/bin"
 ENV XWIN_VERSION=16
 
-RUN rustup target add ${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl && \
-    rustup target add ${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-gnu  && \
+RUN rustup target add ${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC} && \
+    rustup target add ${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}  && \
     rustup target add ${CROSS_COMPILER_TARGET_ARCH}-pc-windows-msvc  && \
     mkdir -p $XWIN_CACHE_DIR && chmod -R a+rw $RUSTUP_HOME $CARGO_HOME
 
@@ -299,23 +304,30 @@ ENV SHARED_RUSTFLAGS="${COMMON_RUSTFLAGS}"
 ENV STATIC_RUSTFLAGS="${COMMON_RUSTFLAGS} -Ctarget-feature=+crt-static -Clink-args=-static \
                       -Clink-args=-nodefaultlibs -Clink-args=-nostdlib -Clink-args=-nostdlib++\
                       -Clink-args=-stdlib=c++ -l static=c++ -l static=c++abi \
-                      -Lnative=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-musl/lib"
+                      -Lnative=$LLVM_SYSROOT/usr/${CROSS_COMPILER_TARGET_ARCH}-unknown-linux-${LIBC}/lib"
 
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="${STATIC_RUSTFLAGS} -Clink-args=--target=aarch64-unknown-linux-musl"
-ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="${STATIC_RUSTFLAGS} -Clink-args=--target=x86_64-unknown-linux-musl"
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="${STATIC_RUSTFLAGS} -Clink-args=--target=aarch64-unknown-linux-${LIBC}"
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="${STATIC_RUSTFLAGS} -Clink-args=--target=x86_64-unknown-linux-${LIBC}"
+ENV CARGO_TARGET_s390x_UNKNOWN_LINUX_MUSL_RUSTFLAGS="${STATIC_RUSTFLAGS} -Clink-args=--target=s390x-unknown-linux-${LIBC}"
 
 ENV CC_aarch64_unknown_linux_musl="clang"
-ENV CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-unknown-linux-musl -fuse-ld=lld -static -fPIC -nostdlib -nodefaultlibs -nostdinc -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/aarch64-unknown-linux-musl/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ -L ${LLVM_SYSROOT}/usr/aarch64-unknown-linux-musl/lib -lc  -L ${LLVM_SYSROOT}/usr/lib/linux/ -lclang_rt.builtins-aarch64"
+ENV CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-unknown-linux-${LIBC} -fuse-ld=lld -static -fPIC -nostdlib -nodefaultlibs -nostdinc -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/aarch64-unknown-linux-${LIBC}/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ -L ${LLVM_SYSROOT}/usr/aarch64-unknown-linux-${LIBC}/lib -lc  -L ${LLVM_SYSROOT}/usr/lib/linux/ -lclang_rt.builtins-aarch64"
 ENV CXX_aarch64_unknown_linux_musl="clang++"
-ENV CXXFLAGS_aarch64_unknown_linux_musl="--target=aarch64-unknown-linux-musl -fuse-ld=lld -nostdinc -static-libstdc++ --stdlib=c++ --rtlib=compiler-rt -nodefaultlibs -nostdinc++ -isystem $LLVM_SYSROOT/usr/include/c++/v1/ -isystem $LLVM_SYSROOT/usr/aarch64-unknown-linux-musl/include/  -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/aarch64-unknown-linux-musl/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ "
+ENV CXXFLAGS_aarch64_unknown_linux_musl="--target=aarch64-unknown-linux-${LIBC} -fuse-ld=lld -nostdinc -static-libstdc++ --stdlib=c++ --rtlib=compiler-rt -nodefaultlibs -nostdinc++ -isystem $LLVM_SYSROOT/usr/include/c++/v1/ -isystem $LLVM_SYSROOT/usr/aarch64-unknown-linux-${LIBC}/include/  -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/aarch64-unknown-linux-${LIBC}/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ "
 
 ENV CC_x86_64_unknown_linux_musl="clang"
-ENV CFLAGS_x86_64_unknown_linux_musl="--target=x86_64-unknown-linux-musl -fuse-ld=lld -static -fPIC -nostdlib -nodefaultlibs -nostdinc -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/x86_64-unknown-linux-musl/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ -L ${LLVM_SYSROOT}/usr/x86_64-unknown-linux-musl/lib -lc  -L ${LLVM_SYSROOT}/usr/lib/linux/ -lclang_rt.builtins-x86_64"
+ENV CFLAGS_x86_64_unknown_linux_musl="--target=x86_64-unknown-linux-${LIBC} -fuse-ld=lld -static -fPIC -nostdlib -nodefaultlibs -nostdinc -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/x86_64-unknown-linux-${LIBC}/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ -L ${LLVM_SYSROOT}/usr/x86_64-unknown-linux-${LIBC}/lib -lc  -L ${LLVM_SYSROOT}/usr/lib/linux/ -lclang_rt.builtins-x86_64"
 ENV CXX_x86_64_unknown_linux_musl="clang++"
-ENV CXXFLAGS_x86_64_unknown_linux_musl="--target=x86_64-unknown-linux-musl -fuse-ld=lld -nostdinc -static-libstdc++ --stdlib=c++ --rtlib=compiler-rt -nodefaultlibs -nostdinc++ -isystem $LLVM_SYSROOT/usr/include/c++/v1/ -isystem $LLVM_SYSROOT/usr/x86_64-unknown-linux-musl/include/  -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/x86_64-unknown-linux-musl/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ "
+ENV CXXFLAGS_x86_64_unknown_linux_musl="--target=x86_64-unknown-linux-${LIBC} -fuse-ld=lld -nostdinc -static-libstdc++ --stdlib=c++ --rtlib=compiler-rt -nodefaultlibs -nostdinc++ -isystem $LLVM_SYSROOT/usr/include/c++/v1/ -isystem $LLVM_SYSROOT/usr/x86_64-unknown-linux-${LIBC}/include/  -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/x86_64-unknown-linux-${LIBC}/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ "
+
+ENV CC_s390x_unknown_linux_musl="clang"
+ENV CFLAGS_s390x_unknown_linux_musl="--target=s390x-unknown-linux-${LIBC} -fuse-ld=lld -static -fPIC -nostdlib -nodefaultlibs -nostdinc -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/s390x-unknown-linux-${LIBC}/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ -L ${LLVM_SYSROOT}/usr/s390x-unknown-linux-${LIBC}/lib -lc  -L ${LLVM_SYSROOT}/usr/lib/linux/ -lclang_rt.builtins-s390x"
+ENV CXX_s390x_unknown_linux_musl="clang++"
+ENV CXXFLAGS_s390x_unknown_linux_musl="--target=s390x-unknown-linux-${LIBC} -fuse-ld=lld -nostdinc -static-libstdc++ --stdlib=c++ --rtlib=compiler-rt -nodefaultlibs -nostdinc++ -isystem $LLVM_SYSROOT/usr/include/c++/v1/ -isystem $LLVM_SYSROOT/usr/s390x-unknown-linux-${LIBC}/include/  -isystem $LLVM_SYSROOT/usr/lib/clang/${LLVM_VERSION}/include/ -isystem $LLVM_SYSROOT/usr/s390x-unknown-linux-${LIBC}/include/ -isystem $LLVM_SYSROOT/usr/include/linux/ "
+
 
 ENV PCRE2_SYS_STATIC=1
-ENV SYSTEMD_LIB_DIR="/lib/${CROSS_COMPILER_TARGET_ARCH}-linux-gnu"
+ENV SYSTEMD_LIB_DIR="/lib/${CROSS_COMPILER_TARGET_ARCH}-linux-${LIBC}"
 
 ENV PKG_CONFIG_ALLOW_CROSS=true \
     PKG_CONFIG_ALL_STATIC=true \
